@@ -251,12 +251,12 @@ const PLAYER_KEYS: [Keys; 2] = [
         rot_cw: KeyCode::E,
     },
     Keys {
-        up: KeyCode::Up,
-        left: KeyCode::Left,
-        down: KeyCode::Down,
-        right: KeyCode::Right,
-        rot_ccw: KeyCode::Slash,
-        rot_cw: KeyCode::RShift,
+        up: KeyCode::I,
+        left: KeyCode::J,
+        down: KeyCode::K,
+        right: KeyCode::L,
+        rot_ccw: KeyCode::U,
+        rot_cw: KeyCode::O,
     },
 ];
 fn move_players(
