@@ -10,8 +10,8 @@ Rust and Bevy on your particular platform better than I could.
 
 The game has two players starting in the bottom left and right. To control the
 left player use W, A, S, D to move. Q rotates counter clockwise and E rotates
-clockwise. The corresponding keys for the right player are ↑, ←, ↓, →, ?, and
-Shift.
+clockwise. The corresponding keys for the right player are I, J, K, L, U, and
+O.
 
 The game ends when the two players roughly tile the target. Five seconds later
 the game restarts.
