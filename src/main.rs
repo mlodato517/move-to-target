@@ -75,7 +75,7 @@ fn setup_camera(mut commands: Commands) {
 
 fn centered_text(asset_server: Res<AssetServer>) -> (TextStyle, TextAlignment) {
     // TODO store a font with the code.
-    let font = asset_server.load("/usr/share/fonts/liberation-mono/LiberationMono-BoldItalic.ttf");
+    let font = asset_server.load("fonts/FiraSans-Bold.ttf");
     let text_style = TextStyle {
         font,
         font_size: 60.0,
