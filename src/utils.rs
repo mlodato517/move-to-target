@@ -1,6 +1,35 @@
 use bevy::prelude::*;
 use bevy::render::mesh::PrimitiveTopology;
+use bevy::render::mesh::VertexAttributeValues;
 
+use super::{HALF_SCREEN_HEIGHT, HALF_SCREEN_WIDTH};
+
+pub const WALL_COLLISION_NONE: u8 = 0;
+pub const WALL_COLLISION_HORIZONTAL: u8 = 1;
+pub const WALL_COLLISION_VERTICAL: u8 = 2;
+
+pub fn mesh_points_raw(mesh: &Mesh) -> Option<&Vec<[f32; 3]>> {
+    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        .map(|position| match position {
+            // TODO first and last points are probably always the same - can probably skip first.
+            VertexAttributeValues::Float32x3(points) => points,
+            _ => unreachable!(),
+        })
+}
+pub fn points_collide_with_wall(points: &[[f32; 3]], transform: &Transform) -> u8 {
+    let mut collision = WALL_COLLISION_NONE;
+    for point in points {
+        let point = transform.mul_vec3(Vec3::from(*point));
+        if point.x <= -HALF_SCREEN_WIDTH || point.x >= HALF_SCREEN_WIDTH {
+            collision |= WALL_COLLISION_HORIZONTAL;
+        } else if point.y <= -HALF_SCREEN_HEIGHT || point.y >= HALF_SCREEN_HEIGHT {
+            collision |= WALL_COLLISION_VERTICAL;
+        }
+    }
+    collision
+}
+
+// TODO Move this to files or something?
 pub struct LevelData {
     /// Target shape to tile onto.
     pub target: Mesh,

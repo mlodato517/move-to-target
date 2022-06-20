@@ -1,21 +1,12 @@
-mod levels;
-use levels::{generate_levels, poly_mesh};
+mod player;
+mod target;
+mod utils;
 
 use std::time::Duration;
 
 use bevy::core::Stopwatch;
 use bevy::prelude::*;
-use bevy::render::mesh::VertexAttributeValues;
 use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
-use rand::prelude::*;
-
-const PLAYER_SPEEDS: [f32; 2] = [200.0, 240.0];
-const ROT_SPEEDS: [f32; 2] = [1.0, 0.6];
-
-const INITIAL_TARGET_SPEED: f32 = PLAYER_SPEEDS[0] / 10.0;
-const MIN_TARGET_SPEED: f32 = PLAYER_SPEEDS[0] / 20.0;
-const MAX_TARGET_SPEED: f32 = PLAYER_SPEEDS[0] / 5.0;
-const TARGET_ROT_SPEED: f32 = ROT_SPEEDS[0] / 10.0;
 
 const TIME_STEP: f32 = 1.0 / 60.0;
 
@@ -27,19 +18,6 @@ const ANGLE_TOLERANCE: f32 = 0.15;
 const HALF_SCREEN_WIDTH: f32 = 200.0;
 const HALF_SCREEN_HEIGHT: f32 = 200.0;
 
-#[derive(Component)]
-struct Player {
-    idx: usize,
-    points: Vec<[f32; 3]>,
-}
-#[derive(Component)]
-struct Target {
-    points: Vec<[f32; 3]>,
-}
-#[derive(Clone, Copy, Component)]
-struct Velocity(Vec2);
-#[derive(Clone, Copy, Component)]
-struct Rotation(f32);
 #[derive(Clone, Copy, Component)]
 struct Score;
 #[derive(Clone, Copy, Component)]
@@ -60,11 +38,16 @@ fn main() {
         .add_startup_system(setup_camera)
         .init_resource::<Stopwatch>()
         .add_state(GameState::Level)
-        .add_system_set(SystemSet::on_enter(GameState::Level).with_system(setup_level))
+        .add_system_set(
+            SystemSet::on_enter(GameState::Level)
+                .with_system(setup_level)
+                .with_system(target::spawn_target)
+                .with_system(player::spawn_players),
+        )
         .add_system_set(
             SystemSet::on_update(GameState::Level)
-                .with_system(move_players)
-                .with_system(move_target)
+                .with_system(target::move_target)
+                .with_system(player::move_players)
                 .with_system(check_positions) // need ordering?
                 .with_system(update_score), // need ordering?
         )
@@ -92,6 +75,7 @@ fn centered_text(asset_server: Res<AssetServer>) -> (TextStyle, TextAlignment) {
 
     (text_style, text_alignment)
 }
+
 fn setup_level(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -108,60 +92,9 @@ fn setup_level(
         })
         .insert(Score); // Should this be a resource?
 
-    // Spawn Players.
-    let mut level_data = generate_levels();
-    let level1 = level_data.pop().unwrap();
-    let player1_points = mesh_points_raw(&level1.player1).unwrap().clone();
-    commands
-        .spawn_bundle(MaterialMesh2dBundle {
-            mesh: Mesh2dHandle(meshes.add(level1.player1)),
-            transform: Transform::default()
-                .with_scale(SIZE)
-                .with_translation([-50.0, -100.0, 0.0].into()),
-            material: materials.add(ColorMaterial::default()),
-            ..default()
-        })
-        .insert(Player {
-            idx: 0,
-            points: player1_points,
-        });
-    let player2_points = mesh_points_raw(&level1.player2).unwrap().clone();
-    commands
-        .spawn_bundle(MaterialMesh2dBundle {
-            mesh: Mesh2dHandle(meshes.add(level1.player2)),
-            transform: Transform::default()
-                .with_scale(SIZE)
-                .with_translation([50.0, -100.0, 0.0].into()),
-            material: materials.add(ColorMaterial::default()),
-            ..default()
-        })
-        .insert(Player {
-            idx: 1,
-            points: player2_points,
-        });
-
-    // Spawn target.
-    let target_points = mesh_points_raw(&level1.target).unwrap().clone();
-    commands
-        .spawn_bundle(MaterialMesh2dBundle {
-            mesh: Mesh2dHandle(meshes.add(level1.target)),
-            transform: Transform::default()
-                .with_scale(SIZE)
-                .with_translation([0.0, 100.0, 0.0].into()),
-            material: materials.add(ColorMaterial::default()),
-            ..default()
-        })
-        .insert(Target {
-            points: target_points,
-        })
-        .insert(Rotation(TARGET_ROT_SPEED))
-        .insert(Velocity(
-            [INITIAL_TARGET_SPEED, INITIAL_TARGET_SPEED].into(),
-        ));
-
     // Spawn walls.
     // TODO follow https://github.com/bevyengine/bevy/blob/latest/examples/games/breakout.rs.
-    let walls = poly_mesh(vec![
+    let walls = utils::poly_mesh(vec![
         [-HALF_SCREEN_WIDTH, -HALF_SCREEN_HEIGHT, 0.0],
         [-HALF_SCREEN_WIDTH, HALF_SCREEN_HEIGHT, 0.0],
         [HALF_SCREEN_WIDTH, HALF_SCREEN_HEIGHT, 0.0],
@@ -192,7 +125,7 @@ fn update_score(
 // https://github.com/bevyengine/bevy/blob/main/examples/games/alien_cake_addict.rs#L180
 fn teardown_level(
     mut commands: Commands,
-    entities: Query<Entity, Or<(With<Player>, With<Target>)>>,
+    entities: Query<Entity, Or<(With<player::Player>, With<target::Target>)>>,
 ) {
     for entity in entities.iter() {
         commands.entity(entity).despawn_recursive();
@@ -247,165 +180,9 @@ fn delay_to_level_1(
     }
 }
 
-// TODO show keys in a legend on the sides of the game.
-struct Keys {
-    up: KeyCode,
-    left: KeyCode,
-    down: KeyCode,
-    right: KeyCode,
-    rot_cw: KeyCode,
-    rot_ccw: KeyCode,
-}
-const PLAYER_KEYS: [Keys; 2] = [
-    Keys {
-        up: KeyCode::W,
-        left: KeyCode::A,
-        down: KeyCode::S,
-        right: KeyCode::D,
-        rot_ccw: KeyCode::Q,
-        rot_cw: KeyCode::E,
-    },
-    Keys {
-        up: KeyCode::I,
-        left: KeyCode::J,
-        down: KeyCode::K,
-        right: KeyCode::L,
-        rot_ccw: KeyCode::U,
-        rot_cw: KeyCode::O,
-    },
-];
-fn move_players(keyboard_input: Res<Input<KeyCode>>, mut query: Query<(&mut Transform, &Player)>) {
-    for (mut transform, player) in query.iter_mut() {
-        let Keys {
-            up,
-            left,
-            down,
-            right,
-            rot_cw,
-            rot_ccw,
-        } = PLAYER_KEYS[player.idx];
-
-        // TODO Test with conversion to i8 and doing ((l ^ r) + (l - r)) as f32
-        let left_pressed = keyboard_input.pressed(left);
-        let right_pressed = keyboard_input.pressed(right);
-        if left_pressed != right_pressed {
-            let x_direction = if left_pressed { -1.0 } else { 1.0 };
-            let old_x = transform.translation.x;
-            transform.translation.x += x_direction * PLAYER_SPEEDS[player.idx] * TIME_STEP;
-
-            if points_collide_with_wall(&player.points, &transform) != 0 {
-                transform.translation.x = old_x;
-            }
-        }
-        let down_pressed = keyboard_input.pressed(down);
-        let up_pressed = keyboard_input.pressed(up);
-        if down_pressed != up_pressed {
-            let y_direction = if down_pressed { -1.0 } else { 1.0 };
-            let old_y = transform.translation.y;
-            transform.translation.y += y_direction * PLAYER_SPEEDS[player.idx] * TIME_STEP;
-
-            if points_collide_with_wall(&player.points, &transform) != 0 {
-                transform.translation.y = old_y;
-            }
-        }
-        let rot_ccw_pressed = keyboard_input.pressed(rot_ccw);
-        let rot_cw_pressed = keyboard_input.pressed(rot_cw);
-        if rot_ccw_pressed != rot_cw_pressed {
-            let rotation_direction = if rot_ccw_pressed { -1.0 } else { 1.0 };
-            let old_rotation = transform.rotation;
-            let rotate_by =
-                Quat::from_rotation_z(rotation_direction * ROT_SPEEDS[player.idx] * TIME_STEP);
-            transform.rotation = transform.rotation.mul_quat(rotate_by);
-
-            if points_collide_with_wall(&player.points, &transform) != 0 {
-                transform.rotation = old_rotation;
-            }
-        }
-    }
-}
-
-const WALL_COLLISION_NONE: u8 = 0;
-const WALL_COLLISION_HORIZONTAL: u8 = 1;
-const WALL_COLLISION_VERTICAL: u8 = 2;
-fn move_target(mut query: Query<(&mut Transform, &Target, &mut Velocity, &mut Rotation)>) {
-    let (mut transform, target, mut velocity, mut rotation) = query.single_mut();
-
-    // Check if moving would get us out of bounds.
-    let old_x = transform.translation.x;
-    let old_y = transform.translation.y;
-    transform.translation.x += velocity.0.x * TIME_STEP;
-    transform.translation.y += velocity.0.y * TIME_STEP;
-    let collision = points_collide_with_wall(&target.points, &transform);
-
-    if collision & WALL_COLLISION_HORIZONTAL > 0 {
-        transform.translation.x = old_x;
-        velocity.0.x *= -1.0;
-    }
-    if collision & WALL_COLLISION_VERTICAL > 0 {
-        transform.translation.y = old_y;
-        velocity.0.y *= -1.0;
-    }
-
-    // Check if rotating would get us out of bounds.
-    let old_rotation = transform.rotation;
-    let rotate_by = Quat::from_rotation_z(rotation.0 * TIME_STEP);
-    transform.rotation = transform.rotation.mul_quat(rotate_by);
-    let collision = points_collide_with_wall(&target.points, &transform);
-
-    if collision > 0 {
-        transform.rotation = old_rotation;
-        rotation.0 *= -1.0;
-    }
-
-    // TODO For deterministic mode, seed the RNG too.
-    *velocity = accelerate_target(*velocity);
-}
-
-fn mesh_points_raw(mesh: &Mesh) -> Option<&Vec<[f32; 3]>> {
-    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-        .map(|position| match position {
-            // TODO first and last points are probably always the same - can probably skip first.
-            VertexAttributeValues::Float32x3(points) => points,
-            _ => unreachable!(),
-        })
-}
-fn points_collide_with_wall(points: &[[f32; 3]], transform: &Transform) -> u8 {
-    let mut collision = WALL_COLLISION_NONE;
-    for point in points {
-        let point = transform.mul_vec3(Vec3::from(*point));
-        if point.x <= -HALF_SCREEN_WIDTH || point.x >= HALF_SCREEN_WIDTH {
-            collision |= WALL_COLLISION_HORIZONTAL;
-        } else if point.y <= -HALF_SCREEN_HEIGHT || point.y >= HALF_SCREEN_HEIGHT {
-            collision |= WALL_COLLISION_VERTICAL;
-        }
-    }
-    collision
-}
-
-fn accelerate_target(mut velocity: Velocity) -> Velocity {
-    // TODO generate fewer random numbers. Also, don't use a cryptographically secure RNG.
-    if thread_rng().gen_bool(0.1) {
-        velocity.0.x *= thread_rng().gen_range(0.5..2.0);
-        velocity.0.x = handle_target_velocity_overflow(velocity.0.x);
-        velocity.0.y *= thread_rng().gen_range(0.5..2.0);
-        velocity.0.y = handle_target_velocity_overflow(velocity.0.y);
-    }
-
-    velocity
-}
-
-/// If the target is going too slowly or too quickly just set it back to the initial speed.
-fn handle_target_velocity_overflow(speed: f32) -> f32 {
-    if !(MIN_TARGET_SPEED..MAX_TARGET_SPEED).contains(&speed.abs()) {
-        INITIAL_TARGET_SPEED * speed.signum()
-    } else {
-        speed
-    }
-}
-
 fn check_positions(
-    players_query: Query<&Transform, With<Player>>,
-    target_query: Query<&Transform, With<Target>>,
+    players_query: Query<&Transform, With<player::Player>>,
+    target_query: Query<&Transform, With<target::Target>>,
     mut state: ResMut<State<GameState>>,
 ) {
     let target = target_query.single();
