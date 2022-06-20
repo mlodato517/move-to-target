@@ -42,10 +42,10 @@ struct Wall;
 #[derive(Clone, Component)]
 struct ResetTimer(Timer);
 
-// TODO have this not have hacky enums for each level.
+// TODO How to handle level 1 vs level 2, etc.? Also need screens before start and after death.
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 enum GameState {
-    Level1,
+    Level,
     Win,
 }
 
@@ -54,16 +54,16 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_startup_system(setup_camera)
         .init_resource::<Stopwatch>()
-        .add_state(GameState::Level1)
-        .add_system_set(SystemSet::on_enter(GameState::Level1).with_system(setup_level))
+        .add_state(GameState::Level)
+        .add_system_set(SystemSet::on_enter(GameState::Level).with_system(setup_level))
         .add_system_set(
-            SystemSet::on_update(GameState::Level1)
+            SystemSet::on_update(GameState::Level)
                 .with_system(move_players)
                 .with_system(move_target)
                 .with_system(check_positions) // need ordering?
                 .with_system(update_score), // need ordering?
         )
-        .add_system_set(SystemSet::on_exit(GameState::Level1).with_system(teardown_level))
+        .add_system_set(SystemSet::on_exit(GameState::Level).with_system(teardown_level))
         .add_system_set(SystemSet::on_enter(GameState::Win).with_system(display_score))
         .add_system_set(SystemSet::on_update(GameState::Win).with_system(delay_to_level_1))
         .run();
@@ -74,7 +74,6 @@ fn setup_camera(mut commands: Commands) {
 }
 
 fn centered_text(asset_server: Res<AssetServer>) -> (TextStyle, TextAlignment) {
-    // TODO store a font with the code.
     let font = asset_server.load("fonts/FiraSans-Bold.ttf");
     let text_style = TextStyle {
         font,
@@ -227,7 +226,7 @@ fn delay_to_level_1(
         }
         stopwatch.reset();
         state
-            .set(GameState::Level1)
+            .set(GameState::Level)
             .expect("How should one handle this?");
     }
 }
@@ -274,69 +273,43 @@ fn move_players(
             rot_ccw,
         } = PLAYER_KEYS[player.0];
 
-        let x_direction = if keyboard_input.pressed(left) {
-            -1.0
-        } else if keyboard_input.pressed(right) {
-            1.0
-        } else {
-            0.0
-        };
-
-        let y_direction = if keyboard_input.pressed(down) {
-            -1.0
-        } else if keyboard_input.pressed(up) {
-            1.0
-        } else {
-            0.0
-        };
-
-        let rotation_direction =
-            if keyboard_input.pressed(rot_cw) && !keyboard_input.pressed(rot_ccw) {
-                -1.0
-            } else if keyboard_input.pressed(rot_ccw) && !keyboard_input.pressed(rot_cw) {
-                1.0
-            } else {
-                0.0
-            };
-
         // TODO don't get mesh points this way every time - just store indices on players/target.
         let mesh = meshes.get(mesh_handle.0.id).unwrap();
 
-        if x_direction != 0.0 {
-            // Check if moving would get us out of bounds
-            let mut new_transform = *transform;
-            new_transform.translation.x =
-                transform.translation.x + x_direction * PLAYER_SPEEDS[player.0] * TIME_STEP;
-            let collision = mesh_collides_with_wall(mesh, &new_transform);
+        // TODO Test with conversion to i8 and doing ((l ^ r) + (l - r)) as f32
+        let left_pressed = keyboard_input.pressed(left);
+        let right_pressed = keyboard_input.pressed(right);
+        if left_pressed != right_pressed {
+            let x_direction = if left_pressed { -1.0 } else { 1.0 };
+            let old_x = transform.translation.x;
+            transform.translation.x += x_direction * PLAYER_SPEEDS[player.0] * TIME_STEP;
 
-            // Only update if not
-            if collision == 0 {
-                transform.translation.x = new_transform.translation.x;
+            if mesh_collides_with_wall(mesh, &transform) != 0 {
+                transform.translation.x = old_x;
             }
         }
-        if y_direction != 0.0 {
-            // Check if moving would get us out of bounds
-            let mut new_transform = *transform;
-            new_transform.translation.y =
-                transform.translation.y + y_direction * PLAYER_SPEEDS[player.0] * TIME_STEP;
-            let collision = mesh_collides_with_wall(mesh, &new_transform);
+        let down_pressed = keyboard_input.pressed(down);
+        let up_pressed = keyboard_input.pressed(up);
+        if down_pressed != up_pressed {
+            let y_direction = if down_pressed { -1.0 } else { 1.0 };
+            let old_y = transform.translation.y;
+            transform.translation.y += y_direction * PLAYER_SPEEDS[player.0] * TIME_STEP;
 
-            // Only update if not
-            if collision == 0 {
-                transform.translation.y = new_transform.translation.y;
+            if mesh_collides_with_wall(mesh, &transform) != 0 {
+                transform.translation.y = old_y;
             }
         }
-        if rotation_direction != 0.0 {
-            // Check if rotating would get us out of bounds
-            let mut new_transform = *transform;
+        let rot_ccw_pressed = keyboard_input.pressed(rot_ccw);
+        let rot_cw_pressed = keyboard_input.pressed(rot_cw);
+        if rot_ccw_pressed != rot_cw_pressed {
+            let rotation_direction = if rot_ccw_pressed { -1.0 } else { 1.0 };
+            let old_rotation = transform.rotation;
             let rotate_by =
                 Quat::from_rotation_z(rotation_direction * ROT_SPEEDS[player.0] * TIME_STEP);
-            new_transform.rotation = transform.rotation.mul_quat(rotate_by);
-            let collision = mesh_collides_with_wall(mesh, &new_transform);
+            transform.rotation = transform.rotation.mul_quat(rotate_by);
 
-            // Only update if not
-            if collision == 0 {
-                transform.rotation = new_transform.rotation;
+            if mesh_collides_with_wall(mesh, &transform) != 0 {
+                transform.rotation = old_rotation;
             }
         }
     }
@@ -354,39 +327,33 @@ fn move_target(
     let mesh = meshes.get(mesh_handle.0.id).unwrap();
 
     // Check if moving would get us out of bounds.
-    let mut new_transform = *transform;
-    new_transform.translation.x += velocity.0.x * TIME_STEP;
-    new_transform.translation.y += velocity.0.y * TIME_STEP;
-    let collision = mesh_collides_with_wall(mesh, &new_transform);
+    let old_x = transform.translation.x;
+    let old_y = transform.translation.y;
+    transform.translation.x += velocity.0.x * TIME_STEP;
+    transform.translation.y += velocity.0.y * TIME_STEP;
+    let collision = mesh_collides_with_wall(mesh, &transform);
 
-    // If so, reverse direction
     if collision & WALL_COLLISION_HORIZONTAL > 0 {
+        transform.translation.x = old_x;
         velocity.0.x *= -1.0;
     }
     if collision & WALL_COLLISION_VERTICAL > 0 {
+        transform.translation.y = old_y;
         velocity.0.y *= -1.0;
     }
 
-    // Only then update position. Have to recalculate because velocity could've changed.
-    transform.translation.x += velocity.0.x * TIME_STEP;
-    transform.translation.y += velocity.0.y * TIME_STEP;
-
     // Check if rotating would get us out of bounds.
-    let mut new_transform = *transform;
+    let old_rotation = transform.rotation;
     let rotate_by = Quat::from_rotation_z(rotation.0 * TIME_STEP);
-    new_transform.rotation = transform.rotation.mul_quat(rotate_by);
-    let collision = mesh_collides_with_wall(mesh, &new_transform);
+    transform.rotation = transform.rotation.mul_quat(rotate_by);
+    let collision = mesh_collides_with_wall(mesh, &transform);
 
-    // If so, reverse rotation direction
     if collision > 0 {
+        transform.rotation = old_rotation;
         rotation.0 *= -1.0;
     }
 
-    // Only then update rotation.
-    let rotate_by = Quat::from_rotation_z(rotation.0 * TIME_STEP);
-    transform.rotation = transform.rotation.mul_quat(rotate_by);
-
-    // For deterministic mode, seed the RNG too.
+    // TODO For deterministic mode, seed the RNG too.
     *velocity = accelerate_target(*velocity);
 }
 
